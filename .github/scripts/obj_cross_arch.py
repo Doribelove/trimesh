@@ -167,7 +167,9 @@ def main():
         [
             "",
             "Baseline regression failures are intentional and checked for assertion failures.",
-            "This runs only OBJ tests under QEMU, with one numerical-library thread.",
+            "This runs only OBJ tests, with one numerical-library thread.",
+            "The workflow configures QEMU for architecture-specific containers;",
+            "i386 can also use the x86-64 host's native 32-bit compatibility support.",
             "It does not complete or replace the full upstream architecture suite.",
         ]
     )
