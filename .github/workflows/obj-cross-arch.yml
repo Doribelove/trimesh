@@ -1,0 +1,74 @@
+name: OBJ cross-architecture validation
+
+on:
+  push:
+    branches: [validation/obj-cross-arch-20261021]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  obj:
+    name: OBJ (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: s390x
+            platform: linux/s390x
+          - arch: i386
+            platform: linux/386
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - name: Prepare immutable source snapshots
+        run: |
+          mkdir -p validation-data/{base,revision,results}
+          git archive dc8490c825c382d2d58b5bd87ecacc74790ead27 | tar -x -C validation-data/base
+          git archive ba44a70bb545f1b1ce09d6a2572548a48d63c393 | tar -x -C validation-data/revision
+          git rev-parse HEAD > validation-data/results/harness-commit.txt
+      - name: Run isolated OBJ comparison
+        timeout-minutes: 35
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -o pipefail
+          docker pull --platform "$TARGET_PLATFORM" debian:trixie-slim
+          docker image inspect debian:trixie-slim > validation-data/results/container-image.json
+          docker run --rm --platform "$TARGET_PLATFORM" \
+            -e DEBIAN_FRONTEND=noninteractive -e OPENBLAS_NUM_THREADS=1 \
+            -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
+            -e TARGET_ARCH \
+            -v "$PWD/validation-data:/validation" \
+            -v "$PWD/.github/scripts/obj_cross_arch.py:/harness.py:ro" \
+            debian:trixie-slim bash -euc '
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                python3-numpy python3-pytest python3-pil python3-shapely \
+                python3-scipy python3-lxml python3-networkx python3-jsonschema \
+                python3-httpx python3-collada python3-rtree
+              dpkg-query -W > /validation/results/packages.txt
+              python3 /harness.py /validation "$TARGET_ARCH"
+            ' 2>&1 | tee validation-data/results/container.log
+      - name: Upload logs and results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: obj-${{ matrix.arch }}
+          path: validation-data/results/
+          if-no-files-found: error
+      - name: Publish validation summary
+        if: always()
+        run: |
+          if [ -f validation-data/results/summary.md ]; then
+            cat validation-data/results/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Validation did not finish; inspect the logs. No pass is claimed.' >> "$GITHUB_STEP_SUMMARY"
+          fi
